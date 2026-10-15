@@ -1,0 +1,12 @@
+# секреты и данные — никогда в репозиторий
+.env
+*.db
+*.db-wal
+*.db-shm
+backups/
+
+__pycache__/
+*.pyc
+venv/
+.venv/
+*.xlsx
