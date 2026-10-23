@@ -39,6 +39,16 @@ def kb(*rows):
     return InlineKeyboardMarkup(inline_keyboard=[list(r) for r in rows])
 
 
+def person(u) -> str:
+    """Как показывать человека владельцу: ФИО и группа, если введены, иначе имя из Telegram."""
+    if not u:
+        return "—"
+    if u["fio"]:
+        grp = f", {u['study_group']}" if u["study_group"] else ""
+        return f"{u['fio']}{grp}"
+    return u["full_name"] or "—"
+
+
 def tariff_title(key: str) -> str:
     if key in config.TARIFFS:
         return config.TARIFFS[key]["title"]

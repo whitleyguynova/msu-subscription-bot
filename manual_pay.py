@@ -82,7 +82,7 @@ async def notify_owner(bot: Bot, pay_id: int, by_admin: bool = False):
     u = await db.get_user(pay["user_id"])
     s = await db.get_sub(pay["user_id"])
     uname = f" @{u['username']}" if u and u["username"] else ""
-    name = html.escape(u["full_name"] or "—") if u and u["full_name"] else "—"
+    name = html.escape(S.person(u))
     promo = f" · промокод {pay['promo']}" if pay["promo"] else ""
     if pay["kind"] == "gift":
         what = f"🎁 Подарок «{S.tariff_title(pay['tariff'])}»"

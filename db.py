@@ -15,7 +15,9 @@ CREATE TABLE IF NOT EXISTS users(
     ref_rewarded INTEGER DEFAULT 0,
     trial_used INTEGER DEFAULT 0,
     pending_promo TEXT,          -- промокод, который применится к следующей оплате
-    pay_bank TEXT                -- банк, на который этот человек переводит
+    pay_bank TEXT,               -- банк, на который этот человек переводит
+    fio TEXT,                    -- ФИО, которое человек ввёл перед оплатой
+    study_group TEXT             -- учебная группа
 );
 CREATE TABLE IF NOT EXISTS subs(
     user_id INTEGER PRIMARY KEY,
@@ -108,7 +110,8 @@ async def init(path: str):
     await conn.executescript(SCHEMA)
     # миграции для базы, созданной прошлой версией
     for table, col, typ in (("payments", "kop", "INTEGER DEFAULT 0"), ("payments", "admin_msg_id", "INTEGER"),
-                             ("payments", "bank", "TEXT"), ("users", "pay_bank", "TEXT")):
+                             ("payments", "bank", "TEXT"), ("users", "pay_bank", "TEXT"),
+                             ("users", "fio", "TEXT"), ("users", "study_group", "TEXT")):
         cols = {r[1] for r in await (await conn.execute(f"PRAGMA table_info({table})")).fetchall()}
         if col not in cols:
             await conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")

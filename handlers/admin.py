@@ -73,7 +73,7 @@ HELP = """<b>Админка</b>
 /addpromo КОД ПРОЦЕНТ [ЛИМИТ] [ДНЕЙ] — промокод
 /promos — промокоды и их эффективность
 /delpromo КОД
-/gift тариф [кол-во] — подарочные коды (m1, m3, sem)
+/gift тариф [кол-во] — подарочные коды (y1, m1, m3)
 /courseend ДД.ММ.ГГГГ — дата конца курса (для приза за 5 друзей)
 /broadcast all|active|former|never — рассылка
 
@@ -396,7 +396,7 @@ async def cmd_info(m: Message, command: CommandObject):
         state = "активна" if s["status"] == "active" and s["expires_at"] > now() else "истекла"
         sub = f"{state} до {fmt_date(s['expires_at'])} · {S.tariff_title(s['tariff'])} · {s['method']}"
     await m.answer(
-        f"<b>{html.escape(u['full_name'] or '—')}</b> @{u['username'] or '—'} · <code>{uid}</code>\n"
+        f"<b>{html.escape(S.person(u))}</b> @{u['username'] or '—'} · <code>{uid}</code>\n"
         f"С нами с {fmt_date(u['created_at'])}, источник: {u['source'] or '—'}\n"
         f"Подписка: {sub}\nОплатил всего: {paid} ₽\nПривёл друзей: {invited}"
     )
@@ -472,16 +472,16 @@ async def cmd_export(m: Message):
     def ts(v):
         return datetime.fromtimestamp(v, config.TZ).replace(tzinfo=None) if v else None
 
-    names = {r["user_id"]: (f"@{r['username']}" if r["username"] else r["full_name"])
-             for r in await db.fetch("SELECT user_id, username, full_name FROM users")}
+    names = {r["user_id"]: (r["fio"] or (f"@{r['username']}" if r["username"] else r["full_name"]))
+             for r in await db.fetch("SELECT user_id, username, full_name, fio FROM users")}
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Подписчики"
-    head = ["Имя", "Ник", "ID", "Статус", "Тариф", "Доступ до", "Оплатил, ₽", "Банк",
+    head = ["ФИО", "Группа", "Имя в Telegram", "Ник", "ID", "Статус", "Тариф", "Доступ до", "Оплатил, ₽", "Банк",
             "Откуда пришёл", "Пригласил", "В боте с"]
     if config.CHANNEL_ID:
-        head.insert(4, "В канале")
+        head.insert(6, "В канале")
     ws.append(head)
     rows = await db.fetch(
         "SELECT u.*, s.status, s.tariff, s.method, s.expires_at, "
@@ -498,11 +498,12 @@ async def cmd_export(m: Message):
         source = {"ref": "по приглашению"}.get(r["source"], r["source"])
         if source and source.startswith("src_"):
             source = source[4:]
-        row = [r["full_name"], f"@{r['username']}" if r["username"] else None, r["user_id"], status,
+        row = [r["fio"], r["study_group"], r["full_name"], f"@{r['username']}" if r["username"] else None,
+               r["user_id"], status,
                S.tariff_title(r["tariff"]) if r["tariff"] else None, ts(r["expires_at"]), r["paid"],
                r["pay_bank"], source, names.get(r["referrer_id"]), ts(r["created_at"])]
         if config.CHANNEL_ID:
-            row.insert(4, "да" if await S.in_channel(m.bot, r["user_id"]) else "нет")
+            row.insert(6, "да" if await S.in_channel(m.bot, r["user_id"]) else "нет")
             await asyncio.sleep(0.04)  # не упираться в лимиты Telegram
         ws.append(row)
 
@@ -596,7 +597,7 @@ async def cmd_courseend(m: Message, command: CommandObject):
 async def cmd_gift(m: Message, command: CommandObject, bot: Bot):
     p = (command.args or "").split()
     if not p or p[0] not in config.TARIFFS:
-        return await m.answer(f"Формат: /gift m1 [кол-во]. Тарифы: {', '.join(config.TARIFFS)}")
+        return await m.answer(f"Формат: /gift m1 [кол-во]. Тарифы: {', '.join(k for k, _ in config.sale_tariffs())}")
     n = min(int(p[1]), 50) if len(p) > 1 and p[1].isdigit() else 1
     bot_name = await S.bot_username(bot)
     links = []
@@ -626,7 +627,8 @@ async def cmd_paid(m: Message, command: CommandObject, bot: Bot):
     """Человек перевёл, но не нажал кнопку — заносим сами."""
     p = (command.args or "").split()
     if len(p) < 2 or p[1] not in config.TARIFFS:
-        return await m.answer(f"Формат: /paid @ник m1  или  /paid 123456789 sem\nТарифы: {', '.join(config.TARIFFS)}")
+        names = ", ".join(f"{k} — {t['title']}" for k, t in config.sale_tariffs())
+        return await m.answer(f"Формат: /paid @ник m1  или  /paid 123456789 y1\nТарифы: {names}")
     uid = await resolve(p[0])
     if not uid or not await db.get_user(uid):
         return await m.answer("Не нашёл. Человек должен хотя бы раз запустить бота.")

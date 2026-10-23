@@ -33,11 +33,20 @@ MANUAL_PAY_NAME = os.getenv("MANUAL_PAY_NAME", "")         # Иван И. — к
 MANUAL_PAY_CHAT_ID = int(os.getenv("MANUAL_PAY_CHAT_ID") or SUPPORT_CHAT_ID)
 MANUAL_PAY_TTL_HOURS = int(os.getenv("MANUAL_PAY_TTL_HOURS", "24"))  # сколько живёт неоплаченная заявка
 
+# best — выгодное предложение: идёт первым, с пометкой и ценой за месяц.
+# hidden — тариф больше не продаётся, но остаётся для старых подписок и подарков
 TARIFFS = {
+    "y1": {"title": "Год", "days": 365, "rub": 2990, "best": True},
     "m1": {"title": "1 месяц", "days": 30, "rub": 500},
     "m3": {"title": "3 месяца", "days": 90, "rub": 1290},
-    "sem": {"title": "Семестр", "days": 150, "rub": 1990},
+    "sem": {"title": "Семестр", "days": 150, "rub": 1990, "hidden": True},
 }
+
+
+def sale_tariffs():
+    """Тарифы на продажу: выгодное предложение первым."""
+    items = [(k, t) for k, t in TARIFFS.items() if not t.get("hidden")]
+    return sorted(items, key=lambda kv: not kv[1].get("best"))
 
 TRIAL_DAYS = int(os.getenv("TRIAL_DAYS", "0"))  # пробный доступ выключен; 1 — включить на день
 # сколько предметов можно открыть на пробном доступе (0 — без ограничений)

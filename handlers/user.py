@@ -40,6 +40,10 @@ class PromoInput(StatesGroup):
     waiting = State()
 
 
+class ProfileInput(StatesGroup):
+    waiting = State()
+
+
 
 async def show(cb: CallbackQuery, text, markup=None):
     """Редактирует сообщение с кнопками, а если нельзя — шлёт новое."""
@@ -108,11 +112,20 @@ async def tariffs_screen(uid: int, kind: str):
     if kind == "gift":
         lines.append("🎁 Подписка в подарок. После оплаты пришлю ссылку — перешли её, "
                      "и доступ включится у получателя сам.\n")
-    for key, t in config.TARIFFS.items():
+    month = config.TARIFFS["m1"]["rub"]
+    for key, t in config.sale_tariffs():
         rub = S.apply_discount(t["rub"], pct)
         price = f"<s>{t['rub']}</s> {rub} ₽" if pct else f"{rub} ₽"
-        lines.append(f"• {t['title']} — {price}")
-        rows.append([btn(f"{t['title']} — {rub} ₽", f"tar:{kind}:{key}")])
+        if t.get("best"):
+            months = max(1, round(t["days"] / 30))
+            per_month = round(rub / months)
+            save = round(100 - t["rub"] / (month * months) * 100)
+            lines.append(f"🔥 <b>{t['title']} — {price}</b>\n"
+                         f"     выгоднее всего: {per_month} ₽ в месяц, экономия {save}%\n")
+            rows.append([btn(f"🔥 {t['title']} — {rub} ₽ · выгодно", f"tar:{kind}:{key}")])
+        else:
+            lines.append(f"• {t['title']} — {price}")
+            rows.append([btn(f"{t['title']} — {rub} ₽", f"tar:{kind}:{key}")])
     if pct:
         lines.append(f"\n🏷 Промокод <b>{code}</b>: −{pct}%")
     if kind == "sub":
@@ -128,8 +141,12 @@ async def sub_screen(uid: int):
     if s and s["status"] == "active" and s["expires_at"] > now():
         text = (f"✅ Подписка активна до <b>{fmt_date(s['expires_at'])}</b>\n"
                 f"Тариф: {S.tariff_title(s['tariff'])}")
+        u = await db.get_user(uid)
+        if u and u["fio"]:
+            text += f"\nНа кого: {html.escape(S.person(u))}"
         open_btn = "📚 Открыть канал" if config.CHANNEL_ID else "📚 Открыть материалы"
-        rows = [[btn(open_btn, "catalog")], [btn("Продлить заранее", "buy:sub")]]
+        rows = [[btn(open_btn, "catalog")], [btn("Продлить заранее", "buy:sub")],
+                [btn("✏️ Изменить ФИО и группу", "profile")]]
         return text, kb(*rows)
     head = "Подписка закончилась. Продлить:" if s else "Доступ ко всем материалам по подписке:"
     text, markup = await tariffs_screen(uid, "sub")
@@ -159,11 +176,9 @@ async def cb_buy(cb: CallbackQuery):
     await cb.answer()
 
 
-@router.callback_query(F.data.startswith("tar:"))
-async def cb_tariff(cb: CallbackQuery):
-    _, kind, key = cb.data.split(":")
+async def pay_screen(uid: int, kind: str, key: str):
     t = config.TARIFFS[key]
-    _, pct = await S.user_discount(cb.from_user.id) if kind == "sub" else (None, 0)
+    _, pct = await S.user_discount(uid) if kind == "sub" else (None, 0)
     rub = S.apply_discount(t["rub"], pct)
     rows = []
     if manual_pay.enabled():
@@ -174,7 +189,45 @@ async def cb_tariff(cb: CallbackQuery):
     gift = " в подарок" if kind == "gift" else ""
     no_methods = not manual_pay.enabled() and not config.TEST_PAYMENTS
     note = "\n\nОплата скоро подключится. Пока можно написать админу." if no_methods else ""
-    await show(cb, f"<b>{t['title']}</b>{gift} — {rub} ₽{note}", kb(*rows))
+    return f"<b>{t['title']}</b>{gift} — {rub} ₽{note}", kb(*rows)
+
+
+PROFILE_ASK = ("Перед оплатой напиши одним сообщением <b>ФИО и группу</b> — так мы поймём, чей перевод.\n\n"
+               "Например: <code>Иванов Иван Иванович, М102</code>")
+
+
+def parse_profile(text: str):
+    """«Иванов Иван Иванович, М102» → (ФИО, группа). Группа — последняя часть, в ней есть цифра."""
+    text = " ".join((text or "").split())
+    if "," in text:
+        fio, grp = (x.strip() for x in text.rsplit(",", 1))
+    else:
+        parts = text.split(" ")
+        fio, grp = " ".join(parts[:-1]), parts[-1] if parts else ""
+    if len(fio.split()) < 2 or not any(c.isdigit() for c in grp) or len(grp) > 20 or len(fio) > 100:
+        return None
+    return fio, grp
+
+
+@router.callback_query(F.data.startswith("tar:"))
+async def cb_tariff(cb: CallbackQuery, state: FSMContext):
+    _, kind, key = cb.data.split(":")
+    u = await db.get_user(cb.from_user.id)
+    if not (u and u["fio"]):
+        await state.set_state(ProfileInput.waiting)
+        await state.update_data(kind=kind, key=key)
+        await show(cb, PROFILE_ASK, kb([btn("← Назад", f"buy:{kind}")]))
+        return await cb.answer()
+    text, markup = await pay_screen(cb.from_user.id, kind, key)
+    await show(cb, text, markup)
+    await cb.answer()
+
+
+@router.callback_query(F.data == "profile")
+async def cb_profile(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(ProfileInput.waiting)
+    await state.update_data(kind=None, key=None)
+    await show(cb, PROFILE_ASK, kb([btn("Отмена", "subs")]))
     await cb.answer()
 
 
@@ -455,6 +508,26 @@ async def on_join_request(req: ChatJoinRequest, bot: Bot):
 
 # Эти два хендлера ловят «любое сообщение в состоянии», поэтому стоят последними:
 # кнопки меню и команды выше перехватываются раньше.
+
+@router.message(ProfileInput.waiting)
+async def profile_input(m: Message, state: FSMContext):
+    if m.text and m.text.startswith("/"):
+        await state.clear()
+        return await m.answer("Окей, отменил.")
+    parsed = parse_profile(m.text)
+    if not parsed:
+        return await m.answer("Не получилось разобрать. Напиши фамилию, имя, отчество и группу через запятую, "
+                              "например: <code>Иванов Иван Иванович, М102</code>")
+    fio, grp = parsed
+    await db.execute("UPDATE users SET fio=?, study_group=? WHERE user_id=?", fio, grp, m.from_user.id)
+    data = await state.get_data()
+    await state.clear()
+    head = f"Записал: <b>{html.escape(fio)}</b>, группа <b>{html.escape(grp)}</b> ✅"
+    if data.get("key"):
+        text, markup = await pay_screen(m.from_user.id, data["kind"], data["key"])
+        return await m.answer(f"{head}\n\n{text}", reply_markup=markup)
+    await m.answer(head)
+
 
 @router.message(PromoInput.waiting)
 async def promo_input(m: Message, state: FSMContext):
